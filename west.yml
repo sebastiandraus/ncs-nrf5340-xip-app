@@ -8,12 +8,14 @@ manifest:
   remotes:
     - name: ncs
       url-base: https://github.com/nrfconnect
+    - name: sebastiandraus
+      url-base: https://github.com/sebastiandraus
 
   projects:
     - name: nrf
-      remote: ncs
-      repo-path: sdk-nrf
-      revision: 18682391decaaa989c362ec8c5b65fd6203a5fdb
+      remote: sebastiandraus
+      repo-path: fw-nrfconnect-nrf
+      revision: zigbee-fota-xip-three-images
       import: true
 
   self:
