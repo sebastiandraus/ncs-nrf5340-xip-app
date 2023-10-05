@@ -27,7 +27,24 @@
 
 #endif /* CONFIG_ZIGBEE_FOTA */
 
+#include <zephyr/stats/stats.h>
+
+#ifdef CONFIG_MCUMGR_GRP_FS
+#include <zephyr/device.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/fs/littlefs.h>
+#endif
+#ifdef CONFIG_MCUMGR_GRP_STAT
+#include <zephyr/mgmt/mcumgr/grp/stat_mgmt/stat_mgmt.h>
+#endif
+
+
 #include "weather_station.h"
+#include "common.h"
+
+
+#define STORAGE_PARTITION_LABEL	storage_partition
+#define STORAGE_PARTITION_ID	FIXED_PARTITION_ID(STORAGE_PARTITION_LABEL)
 
 /* Delay for console initialization */
 #define WAIT_FOR_CONSOLE_MSEC 100
@@ -66,6 +83,32 @@ BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console),
 				zephyr_cdc_acm_uart),
 	     "Console device is not ACM CDC UART device");
 LOG_MODULE_REGISTER(app, CONFIG_ZIGBEE_WEATHER_STATION_LOG_LEVEL);
+
+
+/* From SMP server main.c. */
+/* Define an example stats group; approximates seconds since boot. */
+STATS_SECT_START(smp_svr_stats)
+STATS_SECT_ENTRY(ticks)
+STATS_SECT_END;
+
+/* Assign a name to the `ticks` stat. */
+STATS_NAME_START(smp_svr_stats)
+STATS_NAME(smp_svr_stats, ticks)
+STATS_NAME_END(smp_svr_stats);
+
+/* Define an instance of the stats group. */
+STATS_SECT_DECL(smp_svr_stats) smp_svr_stats;
+
+#ifdef CONFIG_MCUMGR_GRP_FS
+FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(cstorage);
+static struct fs_mount_t littlefs_mnt = {
+	.type = FS_LITTLEFS,
+	.fs_data = &cstorage,
+	.storage_dev = (void *)STORAGE_PARTITION_ID,
+	.mnt_point = "/lfs1"
+};
+#endif
+
 
 /* Stores all cluster-related attributes */
 static struct zb_device_ctx dev_ctx;
@@ -479,8 +522,31 @@ void zboss_signal_handler(zb_bufid_t bufid)
 
 int main(void)
 {
-	int blink_status = 0;
+	int rc = STATS_INIT_AND_REG(smp_svr_stats, STATS_SIZE_32, "smp_svr_stats");
 
+	if (rc < 0) {
+		LOG_ERR("Error initializing stats system [%d]", rc);
+	}
+
+	/* Register the built-in mcumgr command handlers. */
+#ifdef CONFIG_MCUMGR_GRP_FS
+	rc = fs_mount(&littlefs_mnt);
+	if (rc < 0) {
+		LOG_ERR("Error mounting littlefs [%d]", rc);
+	}
+#endif
+
+#ifdef CONFIG_MCUMGR_TRANSPORT_BT
+	start_smp_bluetooth_adverts();
+#endif
+
+	/* Using __TIME__ ensure that a new binary will be built on every
+	 * compile which is convenient when testing firmware upgrade.
+	 */
+	LOG_INF("build time: " __DATE__ " " __TIME__);
+
+
+	/* Zigbee weather station application code. */
 	#ifdef CONFIG_USB_DEVICE_STACK
 	wait_for_console();
 	#endif /* CONFIG_USB_DEVICE_STACK */
@@ -525,5 +591,13 @@ int main(void)
 	/* Start Zigbee stack */
 	zigbee_enable();
 
+	/* From SMP Server main.c,
+	 * The system work queue handles all incoming mcumgr requests.  Let the
+	 * main thread idle while the mcumgr server runs.
+	 */
+	while (1) {
+		k_sleep(K_MSEC(1000));
+		STATS_INC(smp_svr_stats, ticks);
+	}
 	return 0;
 }
